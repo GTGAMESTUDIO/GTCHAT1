@@ -1,0 +1,98 @@
+import socket
+import threading
+
+SERVER_ADDRESS = ('localhost', 5000)  # адрес и порт сервера
+
+# Создание TCP-сокета
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# Привязка сокета к адресу и порту сервера
+server_socket.bind(SERVER_ADDRESS)
+
+# Ожидание подключения клиентов
+server_socket.listen()
+
+# Список пользователей и их данные (id, имя, пароль)
+users = []
+users_data = []
+
+# Функция обработки сообщений от клиента
+def handle_client(client_socket, client_address):
+    print(f'Установлено соединение с клиентом: {client_address}')
+
+    # Аутентификация или регистрация нового пользователя
+    user_id = None
+    while not user_id:
+        try:
+            # Получение имени и пароля пользователя
+            name_password = client_socket.recv(1024).decode().split(':')
+            name = name_password[0]
+            password = name_password[1]
+
+            # Проверка имени пользователя в списке пользователей
+            for i, data in enumerate(users_data):
+                if data[1] == name:
+                    # Если пароль верный, то пользователь аутентифицирован
+                    if data[2] == password:
+                        user_id = data[0]
+                        users[i] = client_socket
+                    # Если пароль неверный, то отправляем сообщение об ошибке и продолжаем аутентификацию
+                    else:
+                        error_message = 'Неверный пароль. Попробуйте еще раз.'
+                        client_socket.sendall(error_message.encode())
+                    break
+            else:
+                # Если имя пользователя не найдено, то создаем нового пользователя
+                user_id = len(users)
+                users.append(client_socket)
+                users_data.append((user_id, name, password))
+
+            # Отправка результата аутентификации или регистрации пользователю
+            result = f'success:{user_id}'.encode() if user_id is not None else b'failure'
+            client_socket.sendall(result)
+
+        except Exception as e:
+            print(f'Ошибка при аутентификации или регистрации пользователя: {e}')
+            client_socket.close()
+            return
+
+    while True:
+        try:
+            # Получение сообщения от клиента
+            data = client_socket.recv(1024)
+
+            # Если сообщение пустое, то закрываем соединение
+            if not data:
+                print(f'Соединение с клиентом {user_id} закрыто.')
+                users.remove(client_socket)
+                client_socket.close()
+                break
+
+            # Отправка сообщения всем пользователям
+            recipient, message = data.decode().split(':')
+            for i, c in enumerate(users):
+                if users_data[i][0] == int(recipient) and client_socket != c:
+                    c.sendall(f'{user_id}:{message}'.encode())
+
+        except Exception as e:
+            print(f'Ошибка при получении сообщения от клиента {user_id}: {e}')
+            users.remove(client_socket)
+            client_socket.close()
+            break
+
+# Бесконечный цикл для ожидания новых клиентов
+while True:
+    try:
+        # Ожидание подключения клиента
+        client_socket, client_address = server_socket.accept()
+
+        # Создание и запуск потока для обработки сообщений от клиента
+        client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
+        client_thread.start()
+
+    except Exception as e:
+        print(f'Ошибка подключения нового клиента: {e}')
+        break
+
+# Завершение работы сервера
+server_socket.close()
